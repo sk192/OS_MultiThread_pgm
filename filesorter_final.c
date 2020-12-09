@@ -31,6 +31,7 @@ struct thread_info
 		pthread_mutex_t* lock;
 		int num_threads;
 		int buf_size;
+		char *path;
 		
 	};	
 
@@ -86,7 +87,6 @@ int get_next_file_idx(struct thread_info* tin, int look_for_status, int waiting_
 		{
 			workable++;
 			if(temp == look_for_status && work_next == -1){
-				//printf("in_get_next\n");
 				work_next = k;
 			}
 		}
@@ -95,9 +95,7 @@ int get_next_file_idx(struct thread_info* tin, int look_for_status, int waiting_
 		}
 		 
 	}
-	//int file_idx = tin->thread_set * work_next + tin->set_id;
-	printf("\n<tid : %d> done : %d, in_progress : %d, work_next : %d\n",
-            tin->myid, done, in_progress, work_next);
+	
 	if(workable == 0)
 		return -3;
 	else if((work_next == -1) || (tin->my_type == READER && in_progress >= READ_AHEAD))
@@ -130,18 +128,13 @@ void mark_buf_status(int* buf_status, pthread_mutex_t *lock, int idx, int status
 
 void *read_file(void * tin)
 {
-	//printf("inside read\n");
 	struct thread_info *read_tin = (struct thread_info *) tin; 
 	while(true)
 	{
 		
 		int next_to_read = get_next_file_idx(read_tin,1,2);
-		printf("\n<tid : %d> next_to_read:%d\n",read_tin->myid, next_to_read);
 		int file_idx = read_tin->thread_set * next_to_read + read_tin->set_id;
-		// if(next_to_read >= 0)
-		// 	printf("<tid:%d> is reading file 'unsorted_%d.bin'\n",read_tin->myid,file_idx);	
-		// else
-		// 	printf("<tid:%d> signal:'%s'\n",read_tin->myid, next_to_read == -2?"continue":"break");
+
 		if(next_to_read == -2)
 			continue;
 		else if(next_to_read == -3)
@@ -159,7 +152,6 @@ void *read_file(void * tin)
 			continue;
 		}
 		int num_bytes = read(fp,read_tin->buf[next_to_read],read_tin->rand_num * sizeof(int));
-		printf("\n<tid : %d> bytes read : %d, total : %d\n", read_tin->myid, num_bytes, read_tin->rand_num);
 		int count = num_bytes / sizeof(int);
 		if(count != read_tin->rand_num)
 			mark_buf_status(read_tin->buf_status, read_tin->lock, next_to_read, 7);
@@ -167,7 +159,6 @@ void *read_file(void * tin)
 			mark_buf_status(read_tin->buf_status, read_tin->lock, next_to_read, 3);
 		close(fp);
 	}
-	printf("\n<tid : %d> reading final exit\n",read_tin->myid);
 	return NULL;
 }
 
@@ -207,12 +198,9 @@ void quick_sort(int *buf, int low, int high)
 void *sorting_file(void * tin)
 {
 	struct thread_info *sort_tin = (struct thread_info *) tin; 
-	//printf("inside sorter\n");
 	while(true)
 	{
 		int next_to_sort = get_next_file_idx(sort_tin, 3,4);
-		printf("\n<tid : %d>next_to_sort:%d\n",sort_tin->myid,next_to_sort);
-		//int file_idx = sort_tin->thread_set * next_to_sort + sort_tin->set_id;
 		if(next_to_sort == -2)
 			continue;
 		else if(next_to_sort == -3)
@@ -220,7 +208,6 @@ void *sorting_file(void * tin)
 		quick_sort(sort_tin->buf[next_to_sort],0,(sort_tin->rand_num)-1);
 		mark_buf_status(sort_tin->buf_status,sort_tin->lock,next_to_sort,5);
 	}
-	printf("\n<tid : %d> sorting done.Final exit\n",sort_tin->myid);
 	return NULL;
 }
 
@@ -229,21 +216,18 @@ void *write_file(void * tin)
 	struct thread_info *write_tin = (struct thread_info *) tin; 
 	while(true)
 	{
-		//printf("inside write\n");
 		int next_to_write = get_next_file_idx(write_tin,5,6);
-		printf("\n<tid : %d> next_to_write:%d\n",write_tin->myid, next_to_write);
 		int file_idx = write_tin->thread_set * next_to_write + write_tin->set_id;
-		//printf("file_idx:%d, next_to_write:%d\n",file_idx, next_to_write);
 		if(next_to_write == -2)
 			continue;
 		else if(next_to_write == -3)
 			break;
 		int fd;
 		char ar[10000];
-		sprintf(ar,"%s/sorted_%d.bin",write_tin->directory,file_idx);
-		//printf("sorted buffer for writing:%s\n",ar );
+
+		sprintf(ar,"%s/sorted_%d.bin",write_tin->path,file_idx);
 		fd = open(ar,O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-		int fp = write(fd,write_tin->buf[next_to_write],sizeof(int));
+		int fp = write(fd,write_tin->buf[next_to_write],sizeof(int) * write_tin->rand_num);
 		if(fp == 0)
 			printf("<tid : %d> writing '%s' didn't work\n",write_tin->myid,ar);
 		else
@@ -251,8 +235,6 @@ void *write_file(void * tin)
 		mark_buf_status(write_tin->buf_status,write_tin->lock,next_to_write,7);
 		close(fd);
 	}
-	printf("\n<tid:%d> writing final exit\n",write_tin->myid);
-	
 	return NULL;
 }
 
@@ -267,9 +249,17 @@ int main(int argc, char* argv[])
 	scanf("%d",&T);
 	int rc;
 	char *directory = argv[1];
+	printf("%s",directory);
 	int t_set = atoi(argv[2]);
 
-	
+	char path[1000]; 
+	sprintf(path,"%s/sorted",directory);
+	struct stat st1 = {0};
+	if (stat(path, &st1) == -1)
+	{
+	 	printf("creating path\n");
+	    mkdir(path, 0700);
+	}
 	
 	struct stat st = {0};
 	if (stat(directory, &st) == -1)
@@ -291,7 +281,8 @@ int main(int argc, char* argv[])
 		create_child_threads[i] = create_file_tin;
 		create_file_tin->directory = directory;
 		create_file_tin->lock = this_lock;
-		//printf("i:%d",i);
+
+
 		rc = pthread_create(&create_file_tin->tid, NULL, create_files, (void *) create_file_tin);
 		if (rc)
 		{
@@ -346,6 +337,7 @@ int main(int argc, char* argv[])
 		read_file_tin->set_id = j;
 		read_file_tin->my_type = READER;
 		child_threads[thread_idx] = read_file_tin;
+		read_file_tin->path = path;
 
 		struct thread_info *sorting_file_tin = (struct thread_info *) malloc (sizeof(struct thread_info)); 
 		thread_idx++;
@@ -359,6 +351,7 @@ int main(int argc, char* argv[])
 		sorting_file_tin->set_id = j;
 		sorting_file_tin->buf = cur_buf;
 		sorting_file_tin->myid = thread_idx;
+		sorting_file_tin->path = path;
 		
 		child_threads[thread_idx] = sorting_file_tin;
 
@@ -373,11 +366,11 @@ int main(int argc, char* argv[])
 		write_file_tin->directory = directory;
 		write_file_tin->set_id = j;
 		write_file_tin->buf = cur_buf;
+		write_file_tin->path = path;
 		
 		write_file_tin->myid = thread_idx;
 		child_threads[thread_idx] = write_file_tin;
-		printf("allocated memory\n");
-
+		
 		rc1 = pthread_create(&read_file_tin->tid,NULL, read_file, (void *) read_file_tin);
 		if (rc1)
 		{
@@ -398,10 +391,8 @@ int main(int argc, char* argv[])
 		{
       		printf("ERROR; return code from pthread_create() is %d\n", rc1);
       		exit(-1);
-		}
-		
+		}	
 	}
-	
 	for(int k =0; k < 3 * t_set; k++)
 	{
 		rc1 = pthread_join(child_threads[k]->tid,NULL);
@@ -410,18 +401,5 @@ int main(int argc, char* argv[])
       		printf("ERROR; joining thread: %d\n",rc1);
 		}
 	}
-	// for(int k =0; k < 3 * t_set; k++)
-	// {
-	// 	if(k%3 == 2)
-	// 	{
-	// 		free(child_threads[k]->buf_status);
-	// 		pthread_mutex_destroy(child_threads[k]->lock);
-	// 		for(int p = 0 ;p < child_threads[k]->num_files; p++)
-	// 			free(child_threads[k]->buf[p]);
-	// 	}
-	// 	free(child_threads[k]);
-	// }
-	// free(child_threads);
 	return(0);
-	
 }

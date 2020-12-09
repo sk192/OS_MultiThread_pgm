@@ -1,3 +1,1 @@
-# OS_programs
-# OS_program
-# OS_program
+This is a multithreaded program to create binary files and then sort these binary files.
